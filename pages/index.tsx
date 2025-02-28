@@ -1,114 +1,118 @@
-import Image from "next/image";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Card, Title, AreaChart, Metric, Flex, Grid, ProgressBar } from '@tremor/react'
+import { GetServerSideProps } from 'next'
+import { getSession } from 'next-auth/react'
+import prisma from '@/lib/prisma'
+import { DashboardProps } from '@/typings/types'
+import { customParseJSON } from '@/lib/utils'
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+export const getServerSideProps: GetServerSideProps<DashboardProps> = async (context) => {
+  const session = await getSession(context)
+  if (!session?.user) {
+    return { redirect: { destination: '/login', permanent: false } }
+  }
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+  // Vehicle statistics
+  const totalVehicles = await prisma.vehicle.count({
+    where: { userId: session.user.id },
+  })
 
-export default function Home() {
-  return (
-    <div
-      className={`${geistSans.variable} ${geistMono.variable} grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]`}
-    >
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              pages/index.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const today = new Date()
+  const startOfToday = new Date(today.setHours(0, 0, 0, 0))
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+  const todaysVehicles = await prisma.vehicle.count({
+    where: {
+      userId: session.user.id,
+      createdAt: { gte: startOfToday }
+    }
+  })
+
+  // Offense type distribution
+  const offenseDistribution = await prisma.vehicle.groupBy({
+    by: ['offenseType'],
+    _count: { _all: true },
+    where: { userId: session.user.id }
+  })
+
+  // Daily activity (last 7 days)
+  const dailyActivity = await prisma.$queryRaw`
+    SELECT 
+      DATE_TRUNC('day', "createdAt") as day,
+      COUNT(*) as count
+    FROM "Vehicle"
+    WHERE "userId" = ${session.user.id}
+      AND "createdAt" >= NOW() - INTERVAL '7 days'
+    GROUP BY day
+    ORDER BY day ASC
+  `
+
+  return {
+    props: {
+      stats: {
+        totalVehicles,
+        todaysVehicles,
+        offenseDistribution,
+        dailyActivity: customParseJSON(dailyActivity.map((entry: any) => ({
+          day: new Date(entry.day),
+          count: Number(entry.count)
+        })))
+      }
+    }
+  }
 }
+
+const DashboardPage: React.FC<DashboardProps> = ({ stats }) => {
+  console.log('stats', stats)
+  const formattedDailyData = stats.dailyActivity.map(entry => ({
+    date: new Date(entry.day).toLocaleDateString('pt-BR'),
+    Vehicles: entry.count,
+  }))
+
+  return (
+    <div className="p-6">
+      <Title>Dashboard Overview</Title>
+
+      <Grid numColsSm={2} numColsLg={3} className="gap-6 mt-6">
+        <Card>
+          <Flex justifyContent="between" alignItems="center">
+            <Title>Total Vehicles</Title>
+            <Metric>{stats.totalVehicles}</Metric>
+          </Flex>
+          <ProgressBar value={stats.todaysVehicles} maxValue={stats.totalVehicles} className="mt-2" />
+          <div className="mt-2 text-sm text-gray-500">
+            {stats.todaysVehicles} registered today
+          </div>
+        </Card>
+
+        <Card>
+          <Title>Offense Distribution</Title>
+          {stats.offenseDistribution.map((item) => (
+            <Flex key={item.type} className="mt-4">
+              <div className="truncate">{item.type}</div>
+              <Metric>{item.count}</Metric>
+            </Flex>
+          ))}
+        </Card>
+
+        <Card>
+          <Title>Daily Activity (7 days)</Title>
+          <AreaChart
+            className="mt-4 h-48"
+            data={formattedDailyData}
+            categories={['Vehicles']}
+            index="date"
+            colors={['blue']}
+            showLegend={false}
+            curveType="monotone"
+          />
+        </Card>
+      </Grid>
+
+      <Card className="mt-6">
+        <Title>Recent Vehicles</Title>
+        {/* Add recent vehicles table here */}
+      </Card>
+    </div>
+  )
+}
+
+export default DashboardPage
